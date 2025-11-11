@@ -8,7 +8,7 @@
 
 
 # Datasets
-We use the same dataset as [Qian et al., 2023](https://github.com/Messi-Q/Cross-Modality-Bug-Detection) and [Li et al., 2023](https://github.com/Secbrain/VulHunter).
+We use the same dataset as [Qian et al., 2023](https://github.com/Messi-Q/Cross-Modality-Bug-Detection) and [Li et al., 2023](https://github.com/Secbrain/VulHunter). The output of the data processing phase, including the processed contract sequences and generated embeddings, is stored in the `data/embedding/smart_contract` and `data/embedding/generated` folders.
 
 
 ## Data Processing
