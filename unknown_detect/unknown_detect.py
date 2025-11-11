@@ -341,7 +341,10 @@ def prepare_opcode_types(X, vocab_size):
     """
     # Create a dummy mapping for demonstration
     # In practice, you should have a proper opcode vocabulary
-    id_to_opcode = {i: f'OP_{i}' for i in range(vocab_size)}
+    op_id = {'push': 1, 'dup': 2, 'swap': 3, 'pop': 4, 'jumpdest': 5, 'add': 6, 'jumpi': 7, 'iszero': 8, 'mstore': 9, 'and': 10, 'mload': 11, 'jump': 12, 'revert': 13, 'sub': 14, 'sload': 15, 'callvalue': 16, 'eq': 17, 'stop': 18, 'return': 19, 'calldataload': 20, 'div': 21, 'calldatasize': 22, 'lt': 23, 'sha3': 24, 'exp': 25, 'mul': 26, 'sstore': 27, 'caller': 28, 'codecopy': 29, 'invalid': 30, 'call': 31, 'gas': 32, 'not': 33, 'gt': 34, 'timestamp': 35, 'or': 36, 'address': 37, 'balance': 38, 'calldatacopy': 39, 'delegatecall': 40, 'returndatasize': 41, 'returndatacopy': 42, 'number': 43, 'log': 44, 'mod': 45, 'blockhash': 46, 'extcodesize': 47, 'difficulty': 48, 'addmod': 49, 'coinbase': 50, 'byte': 51, 'xor': 52, 'sdiv': 53, 'sgt': 54, 'mulmod': 55, 'selfdestruct': 56}
+    id_to_opcode = {}
+    for k, v in op_id.items():
+        id_to_opcode[v] = k.upper()
     
     opcode_types = torch.zeros_like(X)
     for i in range(X.shape[0]):
