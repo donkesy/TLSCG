@@ -409,15 +409,13 @@ def getdataset3(name, generated_num):
     vul_data1 = pd.read_csv("./dataset/embedding/smart_contract/reentrancy.csv")
     vul_data2 = pd.read_csv("./dataset/embedding/smart_contract/timestamp.csv")
     vul_data3 = pd.read_csv("./dataset/embedding/smart_contract/delegatecall.csv")
-    vul_data4 = pd.read_csv("./dataset/embedding/smart_contract/SBunchecked_low_level_calls.csv")
-    unknown_data = pd.read_csv("./dataset/embedding/generated_contract/generated_" + name + ".csv", index_col=0).iloc[:generated_num]
+    unknown_data = pd.read_csv("./dataset/embedding/generated_contract/generated_" + name + "_with_sem_gan.csv", index_col=0).iloc[:generated_num]
     test_normal_label = np.zeros(1500)
-    vul_label = np.ones(vul_data1.shape[0] + vul_data2.shape[0] + vul_data3.shape[0] +
-                        vul_data4.shape[0] + unknown_data.shape[0])
+    vul_label = np.ones(vul_data1.shape[0] + vul_data2.shape[0] + vul_data3.shape[0] + unknown_data.shape[0])
     # vul_label = np.concatenate([test_normal_label, vul_label])
 
 
-    X_train = pd.concat([normal_data[:1500], vul_data1, vul_data2, vul_data3, vul_data4, unknown_data], axis=0)
+    X_train = pd.concat([normal_data[:1500], vul_data1, vul_data2, vul_data3, unknown_data], axis=0)
     y_train = pd.concat([pd.Series(normal_label), pd.Series(vul_label)], axis=0)
     # X_train, X_test, y_train, y_test = train_test_split(data_x, data_y, test_size=0.2, random_state=1)
 
@@ -427,27 +425,23 @@ def getdataset3(name, generated_num):
     unknown_data3 = pd.read_csv("./dataset/embedding/smart_contract/SBdenial_of_service.csv")
     unknown_data4 = pd.read_csv("./dataset/embedding/smart_contract/SBshort_address.csv")
     unknown_data5 = pd.read_csv("./dataset/embedding/smart_contract/SBunchecked_low_level_calls.csv")
-    # X_test = pd.concat([normal_data.iloc[500:520], unknown_data1, unknown_data2, unknown_data3,
-    #                     unknown_data4, unknown_data5], axis=0)
-    # vul_label = np.ones(unknown_data1.shape[0] + unknown_data2.shape[0] + unknown_data3.shape[0] +
-    #                     unknown_data4.shape[0] + unknown_data5.shape[0])
-    # y_test = pd.concat([pd.Series(normal_label[:20]), pd.Series(vul_label)], axis=0)
+
     X_test = pd.concat([normal_data[-1500:]
-                           # , unknown_data1
-                           # , unknown_data2
-                           # , unknown_data3
-                        #, unknown_data4
+                        , unknown_data1
+                        , unknown_data2
+                        , unknown_data3
+                        , unknown_data4
                         , unknown_data5
                         ],
                        axis=0)
     test_normal_label = np.zeros(1500)
     unknown_label = np.ones(
-        # unknown_data1.shape[0] +
-        # unknown_data2.shape[0] +
-        #                     unknown_data3.shape[0]
-                        # + unknown_data4.shape[0] +
-                           unknown_data5.shape[0]
-                            )
+                    unknown_data1.shape[0] +
+                    unknown_data2.shape[0] +
+                    unknown_data3.shape[0] +
+                    unknown_data4.shape[0] +
+                    unknown_data5.shape[0]
+                    )
     y_test = np.concatenate([test_normal_label, unknown_label])
 
     y_train = y_train.values.ravel()  # 为了让其shape为 [3019, 1] ，而不是[3019]
@@ -455,82 +449,6 @@ def getdataset3(name, generated_num):
 
     # print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
     return X_train, X_test, y_train, y_test
-
-def LSTM_classification(name, generated_num):
-    max_len = 500
-    max_words = 128
-    embedding_dim = 256
-    hidden_dim = 128
-    output_dim = 2
-    batch_size = 128
-    epochs = 50
-
-    # 读取数据
-    X_train, X_test, y_train, y_test = getdataset3(name, generated_num)
-    # X_train, X_test, y_train,  y_test = getdataset3(name, generated_num)
-    print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
-
-    ## 对数据集的标签数据进行编码
-    from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-    le = LabelEncoder()
-    train_y = le.fit_transform(y_train).reshape(-1, 1)
-    test_y = le.transform(y_test).reshape(-1, 1)
-    # 对数据集的标签数据进行one-hot编码
-    ohe = OneHotEncoder()
-    train_y = ohe.fit_transform(train_y).toarray()
-    test_y = ohe.transform(test_y).toarray()
-    print(train_y.shape, test_y.shape)
-    print(np.argmax(test_y, axis=1))
-
-    """创建模型"""
-    from keras.models import Model
-    from keras.layers import LSTM, Dense, Dropout, Input, Embedding
-
-    # 定义LSTM模型
-    inputs = Input(name='inputs', shape=[max_len])
-    # Embedding(词汇表大小,batch大小,每个新闻的词长)
-    layer = Embedding(max_words + 1, 128, input_length=max_len)(inputs)
-    layer = LSTM(64, name="LSTM")(layer)
-    layer = Dense(64, activation="relu", name="FC")(layer)
-    layer = Dropout(0.5)(layer)
-    layer = Dense(2, activation="softmax", name="FC2")(layer)
-    model = Model(inputs=inputs, outputs=layer)
-    model.summary()
-
-    from keras.optimizers.optimizer_v2.rmsprop import RMSProp
-    # from keras import optimizers
-    # model.compile(loss="SparseCategoricalCrossentropy", optimizer=rmsprop_v2(), metrics=["accuracy"])
-    model.compile(loss="categorical_crossentropy", optimizer=RMSProp(), metrics=["accuracy"])
-
-    """模型的训练和预测"""
-    # 模型训练
-    model.fit(X_train, train_y, batch_size=128, epochs=100,
-                          # validation_data=(val_seq_mat, val_y),
-                          # callbacks=[EarlyStopping(monitor='val_loss', min_delta=0.0001)]  # 当val_loss不再提升时停止训练
-                          )
-    # loss = model_fit.history['loss']
-    # val_loss = model_fit.history['val_loss']
-
-    # 对测试集进行预测
-    test_pre = model.predict(X_test)
-
-    # 使用指标对效果进行验证
-    from sklearn import metrics
-    print(metrics.classification_report(np.argmax(test_y, axis=1), np.argmax(test_pre, axis=1)))
-    a = np.argmax(test_y, axis=1)
-    b = np.argmax(test_pre, axis=1)
-    cnt=0
-    for ii in range(len(a)):
-        if a[ii] == b[ii] and a[ii] == 1:
-            cnt += 1
-    all_ = 0
-    for ii in range(len(a)):
-        if a[ii] == 1:
-            all_ += 1
-    print(f"{cnt}/{all_} {cnt*100/all_}%")
-    F1 = metrics.classification_report(np.argmax(test_y, axis=1), np.argmax(test_pre, axis=1), output_dict=True)['macro avg']['f1-score']
-    print(F1)
-    return F1
 
 def OpTrans_classification(name, generated_num):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -546,7 +464,7 @@ def OpTrans_classification(name, generated_num):
     window_size = 20
     n_types = 5
     batch_size = 32
-    epochs = 50
+    epochs = 100
     output_dim = 2
     
     # Load data (using your existing function)
@@ -577,10 +495,6 @@ def OpTrans_classification(name, generated_num):
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    # Initialize model
-    
-    # for window_size in [10, 15, 20, 25, 30, 35, 40]:
-        # print(f"\n--- Window Size: {window_size} ---")
     model = OpTrans(
         vocab_size=vocab_size + 1,
         d_model=d_model,
@@ -601,6 +515,7 @@ def OpTrans_classification(name, generated_num):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
     
     # Training loop with gradient clipping
+    best_loss = float('inf')
     model.train()
     for epoch in range(epochs):
         epoch_loss = 0
@@ -623,18 +538,29 @@ def OpTrans_classification(name, generated_num):
             progress_bar.set_postfix({"batch_loss": f"{loss.item():.4f}"})
         
         avg_loss = epoch_loss / len(train_loader)
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), "best_optrans_model.pth")
         print(f"Epoch {epoch+1}/{epochs}, Avg Loss: {avg_loss:.4f}")
     
     # Evaluation
+    model.load_state_dict(torch.load("best_optrans_model.pth"))
     model.eval()
     all_preds = []
     all_labels = []
+    all_probs = []
     with torch.no_grad():
         for X_batch, types_batch, y_batch in test_loader:
             X_batch = X_batch.to(device)
             types_batch = types_batch.to(device)
             
             output = model(X_batch, types_batch)
+            
+            # 获取概率 (应用softmax得到归一化的概率)
+            probs = torch.softmax(output, dim=1)
+            # 收集 positive class (假设是索引1) 的概率
+            all_probs.extend(probs[:, 1].cpu().numpy())
+            
             preds = torch.argmax(output, dim=1).cpu().numpy()
             labels = torch.argmax(y_batch, dim=1).numpy()
             
@@ -657,12 +583,11 @@ def OpTrans_classification(name, generated_num):
 
 if __name__ == '__main__':
     name = "unknown"
-    # f1 = LSTM_classfication(name, 0)
     X = [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000]
 
     print("=================" + name + "==================")
     F1 = []
-    for i in [2500, 3000, 3500, 4000
+    for i in [1000
         #500, 1000, 1500, 2000, 2500,
          #3000, 3500,
         # 4000, 4500, 5000
@@ -670,5 +595,3 @@ if __name__ == '__main__':
         generated_num = i
         f1 = OpTrans_classification(name, generated_num)
         F1.append(f1)
-    # plt.plot(X, F1)
-    # plt.show()
