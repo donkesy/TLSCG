@@ -86,7 +86,6 @@ def get_opcode_type(opcode_id, id_to_opcode=None):
 
 class CallGuidedSparseAttention(nn.Module):
     """
-    MODIFIED: Implements the advanced Call-Guided Sparse Attention.
     This combines a base sliding window with a dynamic, learned attention
     for "caller" opcodes to focus on relevant "callee" regions.
     """
@@ -153,7 +152,6 @@ class CallGuidedSparseAttention(nn.Module):
     
     def _create_call_guided_mask(self, seq_len, opcode_types, Q, K, device):
         """
-        MODIFIED: Creates the dynamic call-guided sparse attention mask.
         Combines a sliding window with a learned guided attention for caller opcodes.
         """
         batch_size, n_heads, _, _ = Q.shape
@@ -174,7 +172,7 @@ class CallGuidedSparseAttention(nn.Module):
         if is_caller.any():
             # Only compute if there are any caller opcodes
             
-            # --- a. Target Region Prediction (Equation 9) ---
+            # --- a. Target Region Prediction  ---
             # Use the first head's Q and K for simplicity, or average across heads
             # Q_callers: [num_callers, d_k], K_all: [batch, seq_len, d_k]
             q_callers = Q[:, 0, :, :][is_caller] # Simplified: taking first head Q
@@ -211,7 +209,7 @@ class CallGuidedSparseAttention(nn.Module):
 
 class TransformerEncoderLayer(nn.Module):
     """
-    UPDATED: Single Transformer encoder layer with Call-Guided sparse attention.
+    Single Transformer encoder layer with Call-Guided sparse attention.
     The `window_size` and `top_k` parameters are passed down.
     """
     
@@ -242,9 +240,6 @@ class TransformerEncoderLayer(nn.Module):
 
 
 class OpTrans(nn.Module):
-    """
-    UPDATED: The main OpTrans class, now configurable with window_size and top_k.
-    """
     
     def __init__(self, vocab_size, d_model=256, n_heads=8, n_layers=6, 
                  d_ff=1024, max_len=500, n_types=5, window_size=50, top_k=16,
@@ -293,7 +288,6 @@ class OpTrans(nn.Module):
         hidden = embeddings
         for layer in self.encoder_layers:
             hidden = layer(hidden, opcode_types, padding_mask)
-            # Removed per-layer grad clipping, usually done globally in training loop
         
         # Global average pooling over non-padded tokens
         mask_expanded = padding_mask.unsqueeze(-1).expand_as(hidden)
@@ -310,7 +304,6 @@ class OpTrans(nn.Module):
 def prepare_opcode_types(X, vocab_size):
     """
     Prepare opcode type information for the input sequences
-    This is a simplified version - you may need to adjust based on your data
     """
     # Create a dummy mapping for demonstration
     # In practice, you should have a proper opcode vocabulary
@@ -375,8 +368,6 @@ def OpTrans_classification(name, generated_num):
     # Initialize model
     results_filename = "f1_scores.txt"
 
-    # 在循环开始前打开文件（或创建新文件）
-    # 使用 'w' 模式会覆盖已存在的文件。如果想追加，可以使用 'a' 模式
     with open(results_filename, 'w') as f:
         f.write("--- F1 Scores for Different Window Sizes ---\n\n")
     
@@ -420,7 +411,6 @@ def OpTrans_classification(name, generated_num):
 
                 epoch_loss += loss.item()
 
-                # 在进度条上动态显示当前 batch loss
                 progress_bar.set_postfix({"batch_loss": f"{loss.item():.4f}"})
             
             avg_loss = epoch_loss / len(train_loader)
