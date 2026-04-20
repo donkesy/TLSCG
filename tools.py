@@ -239,24 +239,6 @@ def get_Bigram(opcode_sequence):
     # print(tmp)
     return tmp
 
-
-def visionable(test_pre, ytest):
-    """混淆矩阵可视化"""
-    # 评价预测效果，计算混淆矩阵
-    from sklearn import metrics
-    confm = metrics.confusion_matrix(np.argmax(test_pre, axis=1), np.argmax(ytest, axis=1))
-    # 混淆矩阵可视化
-    Labname = ["体育", "娱乐", "家居", "房产", "教育", "时尚", "时政", "游戏", "科技", "财经"]
-    plt.figure(figsize=(8, 8))
-    sns.heatmap(confm.T, square=True, annot=True,
-                fmt='d', cbar=False, linewidths=.8,
-                cmap="YlGnBu")
-    plt.xlabel('True label', size=14)
-    plt.ylabel('Predicted label', size=14)
-    plt.xticks(np.arange(10) + 0.5, Labname)
-    plt.yticks(np.arange(10) + 0.3, Labname)
-    plt.show()
-
 def label_num(ytrain):
     """图示训练集都有哪些标签"""
     plt.figure()
