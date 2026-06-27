@@ -143,7 +143,6 @@ if __name__ == '__main__':
         # "reentrancy", "timestamp", "delegatecall",
         #    "SBunchecked_low_level_calls"
         "normal_all"
-                                                      # " mix_vulnerabilities"
            ]
     for name in dir:
         train(name)
