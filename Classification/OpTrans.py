@@ -15,7 +15,7 @@ def getdataset2(name, generated_num):
     normal_label = np.zeros(normal_data.shape[0])
     vul_data = pd.read_csv("./dataset/embedding/smart_contract/" + name + ".csv")
     vul_label = np.ones(vul_data.shape[0])
-    generate_data = pd.read_csv("./dataset/embedding/generated_contract/generated_" + name + "_with_sem_gan.csv",
+    generate_data = pd.read_csv("./dataset/embedding/generated_contract/generated_" + name + ".csv",
                                 index_col=0).iloc[:generated_num]
     generate_label = np.ones(generate_data.shape[0])
 
@@ -26,14 +26,7 @@ def getdataset2(name, generated_num):
     y_test = pd.concat([pd.Series(normal_label[-vul_data.shape[0]:]), pd.Series(vul_label[vul_data.shape[0] // 2:])],
                        axis=0).values
 
-    # data_x1 = pd.concat([normal_data, vul_data], axis=0)
-    # data_y1 = pd.concat([pd.Series(normal_label), pd.Series(vul_label)], axis=0)
-    # X_train1, X_test, y_train1, y_test = train_test_split(data_x1, data_y1, test_size=0.3, random_state=1)
-    #
-    # X_train = pd.concat([X_train1, generate_data], axis=0)
-    # y_train = pd.concat([y_train1, pd.Series(generate_label)], axis=0).values
-
-    y_train = y_train.ravel()  # 为了让其shape为 [n, 1], 而不是[n]
+    y_train = y_train.ravel()  
     y_test = y_test.ravel()
 
     print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
@@ -84,14 +77,72 @@ def get_opcode_type(opcode_id, id_to_opcode=None):
     opcode_name = id_to_opcode.get(opcode_id, 'UNKNOWN')
     return OPCODE_TYPE_MAP.get(opcode_name, 4)  # default to type 4
 
-class CallGuidedSparseAttention(nn.Module):
-    """
-    MODIFIED: Implements the advanced Call-Guided Sparse Attention.
-    This combines a base sliding window with a dynamic, learned attention
-    for "caller" opcodes to focus on relevant "callee" regions.
-    """
-    
-    def __init__(self, d_model, n_heads, window_size=50, top_k=16, dropout=0.1):
+class StandardMultiHeadAttention(nn.Module):
+    def __init__(self, d_model, n_heads, dropout=0.1):
+        super().__init__()
+        assert d_model % n_heads == 0
+        
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_k = d_model // n_heads
+        
+        # Linear projections
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+        
+        self.dropout = nn.Dropout(dropout)
+        self.scale = math.sqrt(self.d_k)
+        
+    def forward(self, x, mask=None):
+        """
+        Args:
+            x: [batch, seq_len, d_model]
+            mask: [batch, seq_len] - padding mask
+        Returns:
+            output: [batch, seq_len, d_model]
+            attention_weights: [batch, n_heads, seq_len, seq_len]
+        """
+        batch_size, seq_len, _ = x.shape
+        
+        # Linear projections
+        Q = self.W_q(x)  # [batch, seq_len, d_model]
+        K = self.W_k(x)
+        V = self.W_v(x)
+        
+        # Reshape for multi-head attention
+        Q = Q.view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)  # [batch, n_heads, seq_len, d_k]
+        K = K.view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        V = V.view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
+        
+        # Scaled dot-product attention
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale  # [batch, n_heads, seq_len, seq_len]
+        
+        # Apply mask (if provided)
+        if mask is not None:
+            # Expand mask for multi-head: [batch, 1, 1, seq_len]
+            mask = mask.unsqueeze(1).unsqueeze(2)
+            scores = scores.masked_fill(mask == 0, -1e9)
+        
+        # Softmax and dropout
+        attention_weights = F.softmax(scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+        
+        # Apply attention to values
+        context = torch.matmul(attention_weights, V)  # [batch, n_heads, seq_len, d_k]
+        
+        # Concatenate heads
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+        
+        # Final linear projection
+        output = self.W_o(context)
+        
+        return output, attention_weights
+
+
+class SparseAttention(nn.Module):    
+    def __init__(self, d_model, n_heads, window_size=50, dropout=0.1):
         super().__init__()
         assert d_model % n_heads == 0
         
@@ -99,7 +150,6 @@ class CallGuidedSparseAttention(nn.Module):
         self.n_heads = n_heads
         self.d_k = d_model // n_heads
         self.window_size = window_size
-        self.top_k = top_k  # NEW: Hyperparameter for guided attention size
         
         self.q_linear = nn.Linear(d_model, d_model)
         self.k_linear = nn.Linear(d_model, d_model)
@@ -107,201 +157,189 @@ class CallGuidedSparseAttention(nn.Module):
         self.out_linear = nn.Linear(d_model, d_model)
         
         self.dropout = nn.Dropout(dropout)
-        # Define caller opcodes (e.g., control flow type 0)
-        self.caller_opcodes_type = 0
+        self.control_opcodes = {0}  # Control flow type
         
     def forward(self, x, opcode_types, mask=None):
         """
         Args:
             x: [batch, seq_len, d_model]
             opcode_types: [batch, seq_len] - semantic types of opcodes
-            mask: optional padding mask [batch, seq_len]
+            mask: optional padding mask
         """
         batch_size, seq_len, _ = x.shape
         
-        # --- Standard Multi-Head Attention Setup ---
+        # Linear projections and reshape for multi-head
         Q = self.q_linear(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         K = self.k_linear(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         V = self.v_linear(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
         
-        # --- MODIFIED: Create Dynamic Call-Guided Sparse Mask ---
-        # The mask is now created per batch, as it depends on the input `opcode_types`
-        attn_mask = self._create_call_guided_mask(seq_len, opcode_types, Q, K, x.device)
-        # attn_mask is [batch_size, seq_len, seq_len]
+        # Create sparse attention mask
+        attn_mask = self._create_sparse_mask(seq_len, opcode_types, x.device)
         
-        # --- Standard Attention Calculation ---
+        # Compute attention scores
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
         
-        # Apply the dynamic sparse mask (needs to be unsqueezed for heads dimension)
-        scores = scores.masked_fill(attn_mask.unsqueeze(1) == 0, -1e9)
+        # Apply sparse mask [batch, n_heads, seq_len, seq_len]
+        # attn_mask is [seq_len, seq_len], need to expand to [1, 1, seq_len, seq_len]
+        scores = scores.masked_fill(attn_mask.unsqueeze(0).unsqueeze(0) == 0, -1e9)
         
         # Apply padding mask if provided
         if mask is not None:
-            # mask is [batch, seq_len], unsqueeze to [batch, 1, 1, seq_len] for broadcasting
             scores = scores.masked_fill(mask.unsqueeze(1).unsqueeze(2) == 0, -1e9)
         
+        # Softmax and dropout
         attn_weights = torch.softmax(scores, dim=-1)
+        
+        # Replace NaN with zeros (can happen with all -inf rows)
         attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
+        
         attn_weights = self.dropout(attn_weights)
         
+        # Apply attention to values
         output = torch.matmul(attn_weights, V)
         
+        # Reshape and project back
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
         output = self.out_linear(output)
         
         return output
     
-    def _create_call_guided_mask(self, seq_len, opcode_types, Q, K, device):
+    def _create_sparse_mask(self, seq_len, opcode_types, device):
         """
-        MODIFIED: Creates the dynamic call-guided sparse attention mask.
-        Combines a sliding window with a learned guided attention for caller opcodes.
+        Create sparse attention mask based on sliding window and control opcodes
         """
-        batch_size, n_heads, _, _ = Q.shape
-
-        # --- 1. Base Local Attention (Sliding Window) ---
-        positions_i = torch.arange(seq_len, device=device).unsqueeze(1)
-        positions_j = torch.arange(seq_len, device=device).unsqueeze(0)
-        distance = torch.abs(positions_i - positions_j)
-        # window_mask is static: [seq_len, seq_len]
-        window_mask = (distance <= self.window_size).float()
-        # Expand for batch dimension: [batch_size, seq_len, seq_len]
-        final_mask = window_mask.unsqueeze(0).expand(batch_size, -1, -1)
-
-        # --- 2. Call-Guided Attention ---
-        # Find positions of "caller" opcodes in the batch: [batch_size, seq_len]
-        is_caller = (opcode_types == self.caller_opcodes_type)
-
-        if is_caller.any():
-            # Only compute if there are any caller opcodes
-            
-            # --- a. Target Region Prediction (Equation 9) ---
-            # Use the first head's Q and K for simplicity, or average across heads
-            # Q_callers: [num_callers, d_k], K_all: [batch, seq_len, d_k]
-            q_callers = Q[:, 0, :, :][is_caller] # Simplified: taking first head Q
-            k_all = K[:, 0, :, :] # Simplified: taking first head K
-
-            # This part is computationally tricky. A more direct implementation:
-            # For each item in batch, find caller indices
-            for i in range(batch_size):
-                caller_indices = torch.where(is_caller[i])[0]
-                if len(caller_indices) == 0:
-                    continue
-
-                # Get query vectors for these callers
-                q_i = Q[i, :, caller_indices, :].transpose(0, 1) # [n_heads, num_callers_i, d_k]
-                k_i = K[i, :, :, :] # [n_heads, seq_len, d_k]
-
-                # Compute target distribution scores (Equation 9)
-                # scores_i: [n_heads, num_callers_i, seq_len]
-                scores_i = torch.matmul(q_i, k_i.transpose(-2, -1)) / math.sqrt(self.d_k)
-                # For simplicity, we average scores across heads to get one distribution
-                p_i = torch.softmax(scores_i.mean(dim=0), dim=-1) # [num_callers_i, seq_len]
-
-                # --- b. Identify Top-K Targets ---
-                # topk_indices: [num_callers_i, top_k]
-                _, topk_indices = torch.topk(p_i, k=self.top_k, dim=-1)
-
-                # --- c. Update the mask for this batch item ---
-                for call_idx_in_batch, target_indices in zip(caller_indices, topk_indices):
-                    # For each caller, allow attention to its top-k targets
-                    final_mask[i, call_idx_in_batch, target_indices] = 1.0
-
-        return final_mask.clamp(0, 1)
+        # Create position indices: [seq_len, 1] and [1, seq_len]
+        positions_i = torch.arange(seq_len, device=device).unsqueeze(1)  # [seq_len, 1]
+        positions_j = torch.arange(seq_len, device=device).unsqueeze(0)  # [1, seq_len]
+        
+        # Sliding window mask: |i - j| <= window_size
+        # This creates a band diagonal mask
+        distance = torch.abs(positions_i - positions_j)  # [seq_len, seq_len]
+        window_mask = (distance <= self.window_size).float()  # [seq_len, seq_len]
+        
+        # Global attention for control opcodes (type 0)
+        # Find positions of control opcodes across all samples in batch
+        control_positions = (opcode_types == 0).any(dim=0)  # [seq_len]
+        
+        # Create control mask: all positions can attend to control opcodes
+        control_mask = control_positions.unsqueeze(0).float()  # [1, seq_len]
+        control_mask = control_mask.expand(seq_len, -1)  # [seq_len, seq_len]
+        
+        # Combine masks: union of window mask and control mask
+        mask = torch.clamp(window_mask + control_mask, 0, 1)  # [seq_len, seq_len]
+        
+        return mask
 
 
 class TransformerEncoderLayer(nn.Module):
-    """
-    UPDATED: Single Transformer encoder layer with Call-Guided sparse attention.
-    The `window_size` and `top_k` parameters are passed down.
-    """
+    """Single Transformer encoder layer with sparse attention"""
     
-    def __init__(self, d_model, n_heads, d_ff, window_size=50, top_k=16, dropout=0.1):
+    def __init__(self, d_model, n_heads, d_ff, window_size=50, dropout=0.1):
         super().__init__()
         
-        self.sparse_attn = CallGuidedSparseAttention(d_model, n_heads, window_size, top_k, dropout)
+        self.sparse_attn = SparseAttention(d_model, n_heads, window_size, dropout)
+        self.MHA = StandardMultiHeadAttention(d_model, n_heads, dropout)  # For comparison
         self.norm1 = nn.LayerNorm(d_model)
         
         self.ff = nn.Sequential(
             nn.Linear(d_model, d_ff),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model)
-            # Removed final dropout to be consistent with original Transformer
+            nn.Linear(d_ff, d_model),
+            nn.Dropout(dropout)
         )
-        self.dropout = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
         
     def forward(self, x, opcode_types, mask=None):
+        # Sparse attention with residual
         attn_out = self.sparse_attn(x, opcode_types, mask)
-        x = self.norm1(x + self.dropout(attn_out))
+        # attn_out, _ = self.MHA(x, mask)  # For comparison
+        x = self.norm1(x + attn_out)
         
+        # Feed-forward with residual
         ff_out = self.ff(x)
-        x = self.norm2(x + self.dropout(ff_out))
+        x = self.norm2(x + ff_out)
         
         return x
 
 
 class OpTrans(nn.Module):
     """
-    UPDATED: The main OpTrans class, now configurable with window_size and top_k.
+    OpTrans: Semantic- and Structure-aware Transformer for Opcode-level Vulnerability Detection
     """
     
     def __init__(self, vocab_size, d_model=256, n_heads=8, n_layers=6, 
-                 d_ff=1024, max_len=500, n_types=5, window_size=50, top_k=16,
-                 dropout=0.1, num_classes=2): # Adjusted dropout to be more standard
+                 d_ff=1024, max_len=500, n_types=5, window_size=50, 
+                 dropout=0.5, num_classes=2):
         super().__init__()
         
         self.d_model = d_model
+        self.max_len = max_len
         
+        # Multi-source embeddings 
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=0)
         self.type_embedding = nn.Embedding(n_types, d_model)
-        # Using learnable positional embeddings, which is more common now
         self.pos_embedding = nn.Embedding(max_len, d_model)
         
-        self.embed_dropout = nn.Dropout(dropout)
+        # Add layer normalization after embeddings
         self.embed_norm = nn.LayerNorm(d_model)
         
+        # Transformer encoder layers with sparse attention
         self.encoder_layers = nn.ModuleList([
-            TransformerEncoderLayer(d_model, n_heads, d_ff, window_size, top_k, dropout)
+            TransformerEncoderLayer(d_model, n_heads, d_ff, window_size, dropout)
             for _ in range(n_layers)
         ])
         
+        # Classification head
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(d_model, num_classes)
         
         self._init_weights()
         
     def _init_weights(self):
+        """Initialize weights"""
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
     
     def forward(self, x, opcode_types):
+        """
+        Args:
+            x: [batch, seq_len] - opcode token IDs
+            opcode_types: [batch, seq_len] - semantic type IDs
+        """
         batch_size, seq_len = x.shape
         
-        padding_mask = (x != 0) # [batch, seq_len]
-        
+        # Create position indices
         positions = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(batch_size, -1)
         
+        # Multi-source embedding 
         token_emb = self.token_embedding(x)
         type_emb = self.type_embedding(opcode_types)
         pos_emb = self.pos_embedding(positions)
         
-        embeddings = self.embed_norm(token_emb + type_emb + pos_emb)
-        embeddings = self.embed_dropout(embeddings)
+        # Combine embeddings and normalize
+        # print( token_emb.shape, type_emb.shape, pos_emb.shape)
+        embeddings = token_emb + type_emb + pos_emb
+        embeddings = self.embed_norm(embeddings)
+        embeddings = self.dropout(embeddings)
         
+        # Create padding mask
+        padding_mask = (x != 0).float()
+        
+        # Pass through transformer encoder layers
         hidden = embeddings
         for layer in self.encoder_layers:
             hidden = layer(hidden, opcode_types, padding_mask)
-            # Removed per-layer grad clipping, usually done globally in training loop
+            # Add gradient clipping per layer to prevent explosion
+            torch.nn.utils.clip_grad_norm_(layer.parameters(), max_norm=1.0)
         
-        # Global average pooling over non-padded tokens
+        # Global average pooling 
         mask_expanded = padding_mask.unsqueeze(-1).expand_as(hidden)
         sum_hidden = (hidden * mask_expanded).sum(dim=1)
-        # Ensure non-zero divisor
-        sum_mask = padding_mask.sum(dim=1, keepdim=True).clamp(min=1)
-        avg_hidden = sum_hidden / sum_mask
+        avg_hidden = sum_hidden / padding_mask.sum(dim=1, keepdim=True).clamp(min=1)
         
+        # Classification
         output = self.fc(self.dropout(avg_hidden))
         
         return output
@@ -463,7 +501,7 @@ def OpTrans_classification(name, generated_num):
 
 if __name__ == '__main__':
     # Example usage
-    vulnerability_types = ["reentrancy"] #, "timestamp", "delegatecall", "SBunchecked_low_level_calls" 
+    vulnerability_types = ["reentrancy"] #, "timestamp", "delegatecall"
     generated_nums = [0, 500, 1000, 1500, 2000]
     
     for vul_type in vulnerability_types:

@@ -17,7 +17,7 @@ VULNERABILITY_LABELS = {
     "reentrancy": 0,
     "timestamp": 1,
     "delegatecall": 2,
-    "integeroverflow": 3,
+    # "integeroverflow": 3,
 }
 
 BASE_PERTURB_MODES = ("local_shuffle", "global_shuffle", "random_swap", "reverse_blocks")
@@ -1307,10 +1307,14 @@ def run_two_stage_pipeline(
     vulnerability_epochs: Optional[int] = None,
     normal_limit: Optional[int] = None,
     vulnerability_limit_per_class: Optional[int] = None,
+    anomaly_output_path: Optional[str] = None,
     generated_output_path: Optional[str] = None,
     num_generated: int = 5000,
     min_normal_ood_score: Optional[float] = None,
     max_normal_ood_score: Optional[float] = None,
+    perturb_mode: str = "all",
+    perturb_intensity: float = 1.0,
+    perturb_window_size: int = 8,
 ) -> Tuple[ConditionalLSTMVAE, ConditionalLSTMVAE]:
     """Normal-VAE defines normality; vulnerability-CVAE learns known vulnerability directions."""
     config = config or TrainConfig()
@@ -1325,6 +1329,17 @@ def run_two_stage_pipeline(
         limit_per_class=vulnerability_limit_per_class,
         init_checkpoint_path=normal_checkpoint,
     )
+
+    if anomaly_output_path:
+        export_extreme_anomaly_dataset(
+            normal_dataset_name=normal_dataset_name,
+            output_path=anomaly_output_path,
+            config=normal_config,
+            limit=normal_limit,
+            perturb_mode=perturb_mode,
+            perturb_intensity=perturb_intensity,
+            perturb_window_size=perturb_window_size,
+        )
 
     if generated_output_path:
         sequences, labels, _ = load_vulnerability_dataset(
@@ -1687,10 +1702,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             vulnerability_epochs=args.finetune_epochs,
             normal_limit=args.normal_limit,
             vulnerability_limit_per_class=args.limit_per_class,
+            anomaly_output_path=args.save_extreme_anomaly_csv,
             generated_output_path=args.generate_boundary_csv,
             num_generated=args.num_generated,
             min_normal_ood_score=args.min_normal_ood_score,
             max_normal_ood_score=args.max_normal_ood_score,
+            perturb_mode=args.perturb_mode,
+            perturb_intensity=args.perturb_intensity,
+            perturb_window_size=args.perturb_window_size,
         )
         return
 
@@ -1724,23 +1743,3 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 if __name__ == "__main__":
     main()
 
-
-# """
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --dataset mix_vulnerabilities --epochs 150 --batch-size 32 --generate-boundary-csv dataset\embedding\generated_contract\generated_ood_vulnerabilities.csv --num-generated 5000
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --two-stage --normal-dataset normal_all --dataset mix_vulnerabilities --normal-epochs 100 --finetune-epochs 80 --batch-size 128 --output-dir result\lstm_ood_vae_two_stage --generate-boundary-csv dataset\embedding\generated_contract\generated_two_stage_ood.csv --num-generated 5000 --min-normal-ood-score 5.0
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --generate-only --dataset mix_vulnerabilities --vulnerability-checkpoint result\lstm_ood_vae_two_stage\ConditionalLSTMVAE_mix_vulnerabilities_best.pt --normal-checkpoint result\lstm_ood_vae_two_stage\NormalLSTMVAE_best.pt --generate-boundary-csv dataset\embedding\generated_contract\generated_two_stage_ood.csv --num-generated 5000 --batch-size 128
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --train-interpolation-vae --normal-checkpoint result\lstm_ood_vae_two_stage\NormalLSTMVAE_best.pt --normal-dataset normal_all --epochs 50 --batch-size 128 --output-dir result\lstm_ood_vae_interpolation --perturb-mode all --perturb-window-size 16 --save-extreme-anomaly-csv dataset\embedding\generated_contract\extreme_anomaly_perturbed.csv
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --export-extreme-anomaly-only --normal-dataset normal_all --perturb-mode all --perturb-window-size 16 --save-extreme-anomaly-csv dataset\embedding\generated_contract\extreme_anomaly_perturbed.csv
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py --interpolate-anomaly --normal-checkpoint result\lstm_ood_vae_two_stage\NormalLSTMVAE_best.pt --interpolation-checkpoint result\lstm_ood_vae_interpolation\InterpolationLSTMVAE_best.pt --normal-dataset normal_all --length-reference-dataset mix_vulnerabilities --generate-boundary-csv dataset\embedding\generated_contract\generated_interpolated_ood.csv --num-generated 5000 --batch-size 128 --interpolation-steps 5 --min-alpha 0.35 --max-alpha 0.85 --perturb-mode all --perturb-window-size 16 --min-normal-ood-score 0.3 --max-normal-ood-score 2.5
-
-# python generated_smart_contracts\train\train_lstmVAE_ood.py `
-#   --export-extreme-anomaly-only `
-#   --normal-dataset normal_all `
-#   --perturb-mode all --perturb-window-size 16 `
-#   --save-extreme-anomaly-csv dataset\embedding\generated_contract\extreme_anomaly_perturbed.csv
-# """

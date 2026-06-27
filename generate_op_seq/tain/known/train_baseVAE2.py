@@ -134,7 +134,7 @@ def train(name):
             epoch_loss += loss.item()  # 当前loss值
             # 利用训练的模型进行测试
         print(f'Epoch {epoch + 1}: Loss = {epoch_loss / len(data_loader)}')
-    torch.save(model.state_dict(), 'baseVAE2_' + name + '_model_with_sem_gan_final.pt')
+    torch.save(model.state_dict(), 'baseVAE2_' + name + '.pt')
     return model
 
 
@@ -146,4 +146,3 @@ if __name__ == '__main__':
            ]
     for name in dir:
         train(name)
-    # train("mix_vulnerabilities")
