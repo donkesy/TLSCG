@@ -21,13 +21,3 @@ python generate_op_seq\tain\unknown\train_lstmvae.py `
   --num-generated 5000 `
   --min-normal-ood-score 5.0
 ```
-
-## Output files
-
-```text
-result/lstm_ood_vae_two_stage/NormalLSTMVAE_best.pt
-result/lstm_ood_vae_two_stage/ConditionalLSTMVAE_mix_vulnerabilities_best.pt
-dataset/embedding/generated_contract/extreme_anomaly_perturbed.csv
-dataset/embedding/generated_contract/extreme_anomaly_perturbed_metadata.csv
-dataset/embedding/generated_contract/generated_two_stage_ood.csv
-```
